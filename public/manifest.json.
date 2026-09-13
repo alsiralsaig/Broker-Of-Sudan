@@ -1,0 +1,35 @@
+{
+  "name": "سمسار السودان — بيع وشراء وإيجار",
+  "short_name": "سمسار السودان",
+  "description": "منصة بيع وشراء وإيجار السيارات والعقارات في السودان، مع نظام مفاصلة مباشر بين البائع والمشتري",
+  "start_url": "/",
+  "id": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1220",
+  "theme_color": "#071043",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "https://gfqrutdwvtqxtfgndyhd.supabase.co/storage/v1/object/public/media/public/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://gfqrutdwvtqxtfgndyhd.supabase.co/storage/v1/object/public/media/public/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://gfqrutdwvtqxtfgndyhd.supabase.co/storage/v1/object/public/media/public/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["shopping", "business", "lifestyle"]
+}

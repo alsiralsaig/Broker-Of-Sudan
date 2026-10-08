@@ -48,10 +48,26 @@ export async function createPgliteDb(dataDir?: string): Promise<Db> {
 
 let cached: Promise<Db> | null = null;
 
+/** رابط القاعدة — يقبل الأسماء الافتراضية أو بادئة (مثلاً STORAGE_DATABASE_URL من ربط Vercel) */
+export function findDbUrl(): string {
+  const env = process.env;
+  if (env.DATABASE_URL) return env.DATABASE_URL;
+  if (env.POSTGRES_URL) return env.POSTGRES_URL;
+  const key = Object.keys(env).find(
+    (k) => /(^|_)(DATABASE_URL|POSTGRES_URL)$/.test(k) && /^postgres(ql)?:\/\//.test(env[k] || '')
+  );
+  return key ? env[key]! : '';
+}
+
+/** أسماء متغيرات القاعدة/التخزين الموجودة (الأسماء بس، بدون القيم) — للتشخيص */
+export function dbEnvNames(): string[] {
+  return Object.keys(process.env).filter((k) => /DATABASE|POSTGRES|^PG|NEON|BLOB/.test(k)).sort();
+}
+
 /** يرجّع اتصال قاعدة البيانات المناسب للبيئة */
 export function getDb(): Promise<Db> {
   if (cached) return cached;
-  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+  const url = findDbUrl();
   if (url) {
     cached = Promise.resolve(createNeonDb(url));
   } else if (process.env.LOCAL_PGLITE) {

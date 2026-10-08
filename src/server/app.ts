@@ -1,7 +1,7 @@
 // موجّه الـ API — مستقل عن المنصة (Next.js route handler أو الاختبارات).
 // كل العمليات بتمر من هنا بصلاحيات: محادثاتك ليك بس، وإعلانك إنت بس البتعدّله.
 import type { Db } from './db';
-import { getDb } from './db';
+import { getDb, dbEnvNames } from './db';
 import { ensureSchema } from './schema';
 import {
   COOKIE_NAME, type Role, type SessionClaims,
@@ -815,7 +815,8 @@ export async function handleApi(req: ApiRequest, dbOverride?: Db): Promise<ApiRe
     const msg = String(e?.message || '').includes('DATABASE_URL')
       ? 'قاعدة البيانات غير مربوطة — تأكد من DATABASE_URL في إعدادات Vercel'
       : 'حصل خطأ في السيرفر، جرّب تاني';
-    return { status: 500, json: { error: msg }, headers: { 'Cache-Control': 'no-store' }, cookies: cookiesOut };
+    const diag = msg.includes('DATABASE_URL') ? { envNames: dbEnvNames() } : {};
+    return { status: 500, json: { error: msg, ...diag }, headers: { 'Cache-Control': 'no-store' }, cookies: cookiesOut };
   }
 }
 

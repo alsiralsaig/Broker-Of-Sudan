@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BellRing, X } from "lucide-react";
-import { enablePush, getPushState, type PushState } from "@/lib/push";
+import { enablePush, getPushState, syncPush, PushError, type PushState } from "@/lib/push";
 
 const KEY = "bs_push_banner_hidden_until";
 
@@ -10,10 +10,18 @@ const KEY = "bs_push_banner_hidden_until";
 export default function PushBanner() {
   const [state, setState] = useState<PushState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (Number(localStorage.getItem(KEY) || 0) > Date.now()) return;
-    getPushState().then(setState).catch(() => {});
+    (async () => {
+      let st = await getPushState().catch(() => null);
+      // الإذن ممنوح لكن ما في اشتراك — نشترك بصمت
+      if (st === "off" && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        st = (await syncPush()) || st;
+      }
+      setState(st);
+    })();
   }, []);
 
   if (!state || state === "on" || state === "unsupported") return null;
@@ -26,9 +34,11 @@ export default function PushBanner() {
 
   const enable = async () => {
     setBusy(true);
+    setErr(null);
     try {
       setState(await enablePush());
-    } catch {
+    } catch (e) {
+      setErr(e instanceof PushError ? e.message : "تعذّر التفعيل — جرّب تاني");
       setState(await getPushState());
     } finally {
       setBusy(false);
@@ -46,7 +56,10 @@ export default function PushBanner() {
     <div className="bg-sky-500/15 border-b border-sky-500/30">
       <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-2">
         <BellRing size={16} className="text-sky-300 shrink-0" />
-        <p className="flex-1 text-[11px] sm:text-xs text-sky-100 leading-relaxed">{text}</p>
+        <p className="flex-1 text-[11px] sm:text-xs text-sky-100 leading-relaxed">
+          {text}
+          {err && <span className="block text-amber-300 mt-0.5">⚠️ {err}</span>}
+        </p>
         {state === "off" && (
           <button
             onClick={enable}

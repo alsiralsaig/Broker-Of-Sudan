@@ -3,7 +3,7 @@
 // ملاحظة: البيانات الحية (المحادثات، الإعلانات) تُجلب دائماً من الشبكة مباشرة
 // ولا يتم تخزينها مؤقتاً هنا حتى تبقى محدثة دوماً.
 
-const CACHE_NAME = "samsar-sudan-v7";
+const CACHE_NAME = "samsar-sudan-v8";
 const APP_SHELL = [
   "/",
   "/manifest.json",

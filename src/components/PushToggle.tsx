@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BellPlus, BellOff } from "lucide-react";
-import { enablePush, disablePush, getPushState, type PushState } from "@/lib/push";
+import { enablePush, disablePush, getPushState, syncPush, PushError, type PushState } from "@/lib/push";
 
 const msg: Record<PushState, string> = {
   unsupported: "المتصفح ده ما بيدعم الإشعارات — جرّب Chrome",
@@ -16,9 +16,16 @@ const msg: Record<PushState, string> = {
 export default function PushToggle({ compact }: { compact?: boolean }) {
   const [state, setState] = useState<PushState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    getPushState().then(setState).catch(() => setState("unsupported"));
+    (async () => {
+      let st: PushState = await getPushState().catch(() => "unsupported" as PushState);
+      if (st === "off" && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        st = (await syncPush()) || st;
+      }
+      setState(st);
+    })();
   }, []);
 
   if (!state) return null;
@@ -26,9 +33,11 @@ export default function PushToggle({ compact }: { compact?: boolean }) {
 
   const enable = async () => {
     setBusy(true);
+    setErr(null);
     try {
       setState(await enablePush());
-    } catch {
+    } catch (e) {
+      setErr(e instanceof PushError ? e.message : "تعذّر التفعيل — جرّب تاني");
       setState(await getPushState());
     } finally {
       setBusy(false);
@@ -37,6 +46,7 @@ export default function PushToggle({ compact }: { compact?: boolean }) {
 
   if (state === "off") {
     return (
+      <div>
       <button
         onClick={enable}
         disabled={busy}
@@ -44,6 +54,8 @@ export default function PushToggle({ compact }: { compact?: boolean }) {
       >
         <BellPlus size={15} /> {busy ? "لحظة..." : "فعّل الإشعارات على الجهاز ده"}
       </button>
+      {err && <p className="text-[11px] text-amber-300 px-3 py-2 leading-relaxed">⚠️ {err}</p>}
+      </div>
     );
   }
 

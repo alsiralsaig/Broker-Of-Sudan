@@ -935,6 +935,28 @@ route('POST', '/push/unsubscribe', async (c) => {
 
 // ═════════════════════════ لوحة الإدارة ═════════════════════════
 
+// تجربة الإشعارات: بيرسل إشعار للمستخدم الحالي ويرجّع نتيجة كل جهاز (للتشخيص)
+route('POST', '/push/test', async (c) => {
+  const me = requireUser(c);
+  const subs = await c.db.query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1`, [me.id]);
+  if (!subs.length) return { devices: 0, results: [] };
+  const webpush = (await import('web-push')).default;
+  const v = await getVapid(c.db);
+  webpush.setVapidDetails('mailto:admin@broker-of-sudan.app', v.publicKey, v.privateKey);
+  const body = JSON.stringify({ title: '🔔 تجربة إشعار', body: 'لو شايف الرسالة دي في شريط التلفون، الإشعارات شغالة ✅', url: '/account', tag: 'test' });
+  const results = await Promise.all(subs.map(async (s: any) => {
+    const host = (() => { try { return new URL(s.endpoint).host; } catch { return '?'; } })();
+    try {
+      const r = await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, body, { TTL: 600, urgency: 'high' });
+      return { host, ok: true, status: r.statusCode };
+    } catch (e: any) {
+      if (e?.statusCode === 404 || e?.statusCode === 410) await c.db.query(`DELETE FROM push_subscriptions WHERE id = $1`, [s.id]);
+      return { host, ok: false, status: e?.statusCode || 0, error: String(e?.body || e?.message || e).slice(0, 200) };
+    }
+  }));
+  return { devices: subs.length, results };
+});
+
 route('GET', '/admin/stats', async (c) => {
   requireUser(c, 'admin');
   const [u] = await c.db.query(

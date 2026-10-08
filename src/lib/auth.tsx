@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api } from "./api";
+import { syncPush } from "./push";
 import type { User } from "./types";
 
 interface AuthState {
@@ -39,8 +40,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refresh();
   }, [refresh]);
 
+  // ربط اشتراك الإشعارات بالحساب الداخل (لو الإذن موجود من قبل)
+  useEffect(() => {
+    if (user?.id) syncPush();
+  }, [user?.id]);
+
   const logout = useCallback(async () => {
     try {
+      // الجهاز ما يستلم إشعارات الحساب بعد الخروج
+      const { disablePush } = await import("./push");
+      await disablePush().catch(() => {});
       await api("/auth/logout", { method: "POST" });
     } finally {
       setUser(null);

@@ -11,6 +11,8 @@ const dealLabel: Record<string, string> = {
 
 const statusLabel: Record<string, string> = {
   available: "",
+  pending: "⏳ قيد المراجعة",
+  rejected: "⚠️ مرفوض",
   reserved: "🔒 محجوز",
   sold: "✅ تم البيع",
   rented: "✅ تم التأجير",

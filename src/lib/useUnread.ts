@@ -2,23 +2,31 @@
 
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import type { UnreadItem } from "./types";
+import type { AppNotification, UnreadItem } from "./types";
 
-/** غير المقروء من السيرفر — بيتحدّث كل 15 ثانية والصفحة ظاهرة */
+export interface UnreadState {
+  items: UnreadItem[];
+  notifications: AppNotification[];
+  unreadNotifications: number;
+}
+
+const EMPTY: UnreadState = { items: [], notifications: [], unreadNotifications: 0 };
+
+/** غير المقروء + الإشعارات من السيرفر — كل 15 ثانية والصفحة ظاهرة */
 export function useUnread(enabled: boolean) {
-  const [items, setItems] = useState<UnreadItem[]>([]);
+  const [state, setState] = useState<UnreadState>(EMPTY);
 
   useEffect(() => {
     if (!enabled) {
-      setItems([]);
+      setState(EMPTY);
       return;
     }
     let alive = true;
     const load = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const r = await api<{ items: UnreadItem[] }>("/unread");
-        if (alive) setItems(r.items);
+        const r = await api<UnreadState>("/unread");
+        if (alive) setState(r);
       } catch {
         /* تجاهل */
       }
@@ -36,7 +44,7 @@ export function useUnread(enabled: boolean) {
     };
   }, [enabled]);
 
-  return items;
+  return state;
 }
 
 export const refreshUnread = () => window.dispatchEvent(new Event("bs:unread-refresh"));

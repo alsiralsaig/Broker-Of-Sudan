@@ -6,9 +6,11 @@ import { ensureSchema } from './schema';
 import {
   COOKIE_NAME, type Role, type SessionClaims,
   hashPassword, verifyPassword, passwordProblem, normalizePhone,
-  signSession, readSession, sessionCookie, clearCookie, parseCookies,
+  signSession, readSession, sessionCookie, clearCookie, parseCookies, tempPassword,
 } from './auth';
 import { storeMedia, isOurMediaUrl, readStoredMedia, MediaError, blobEnabled } from './media';
+import { getSettings, saveSettings, computeCommission, DEFAULT_SETTINGS, type PlatformSettings } from './settings';
+import { notify, adminIds, getVapid } from './notify';
 
 // ───────────────────────── أنواع عامة ─────────────────────────
 
@@ -137,6 +139,7 @@ function listingOut(r: any, media: any[] = []) {
     propertyType: r.property_type, propertyRooms: n(r.property_rooms), propertyBathrooms: n(r.property_bathrooms),
     propertyAreaSqm: n(r.property_area_sqm), propertyFloor: n(r.property_floor),
     status: r.status,
+    rejectReason: r.reject_reason || null,
     views: Number(r.views || 0),
     cover: r.cover ?? media.find((m) => m.media_type === 'image')?.url ?? null,
     media: media.map((m) => ({ id: m.id, type: m.media_type, url: m.url })),
@@ -180,7 +183,14 @@ route('GET', '/health', async (c) => {
   return { ok: true };
 });
 
-route('GET', '/config', async () => ({ videoUpload: blobEnabled() }));
+route('GET', '/config', async (c) => {
+  const st = await getSettings(c.db);
+  return {
+    videoUpload: blobEnabled(),
+    requireApproval: st.requireApproval,
+    commission: { carSalePct: st.carSalePct, propertySalePct: st.propertySalePct, rentMonths: st.rentMonths },
+  };
+});
 
 // ═════════════════════════ الحسابات ═════════════════════════
 
@@ -411,6 +421,9 @@ route('GET', '/listings/:id', async (c) => {
   const r = await getListing(c.db, c.params.id);
   const me = c.user;
   const isOwner = !!me && me.id === r.seller_id;
+  if ((r.status === 'pending' || r.status === 'rejected') && !isOwner && me?.role !== 'admin') {
+    throw new HttpError(404, 'الإعلان غير موجود أو اتمسح');
+  }
   if (!isOwner) {
     await c.db.query(`UPDATE listings SET views = views + 1 WHERE id = $1`, [r.id]);
   }
@@ -443,9 +456,19 @@ route('POST', '/listings', async (c) => {
   const me = requireUser(c);
   await rateLimit(c.db, `listing:${me.id}`, 20);
   const d = listingInput(c.req.body || {});
+  const st = await getSettings(c.db);
+  if (me.role !== 'admin' && st.blockOverdueDays > 0) {
+    const late = await c.db.query(
+      `SELECT 1 FROM deals WHERE seller_id = $1 AND commission_status IN ('due','submitted')
+         AND closed_at < now() - ($2 || ' days')::interval LIMIT 1`,
+      [me.id, String(st.blockOverdueDays)]
+    );
+    if (late.length) throw new HttpError(403, 'عندك عمولة متأخرة — سدّدها من «إعلاناتي» عشان تقدر تنشر إعلان جديد');
+  }
+  const pending = st.requireApproval && me.role !== 'admin';
   const id = newId('lst');
-  const cols = ['id', 'seller_id', ...LISTING_COLS];
-  const vals = [id, me.id, ...LISTING_COLS.map((k) => (d as any)[k])];
+  const cols = ['id', 'seller_id', 'status', ...LISTING_COLS];
+  const vals = [id, me.id, pending ? 'pending' : 'available', ...LISTING_COLS.map((k) => (d as any)[k])];
   await c.db.tx([
     {
       text: `INSERT INTO listings (${cols.join(',')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(',')})`,
@@ -453,6 +476,11 @@ route('POST', '/listings', async (c) => {
     },
     ...mediaStmts(id, d.media),
   ]);
+  if (pending) {
+    await notify(c.db, await adminIds(c.db), {
+      kind: 'listing_pending', title: '📝 إعلان جديد منتظر المراجعة', body: d.title, url: '/admin?tab=listings',
+    });
+  }
   return { listing: await listingWithMedia(c.db, await getListing(c.db, id)) };
 });
 
@@ -468,9 +496,14 @@ route('PATCH', '/listings/:id', async (c) => {
   if (r.status === 'sold' || r.status === 'rented') throw new HttpError(400, 'الإعلان ده اتقفل بصفقة — ما بيتعدّل');
   const d = listingInput(c.req.body || {});
   const sets = LISTING_COLS.map((k, i) => `${k} = $${i + 2}`).join(', ');
+  let statusSql = '';
+  if (r.status === 'rejected') {
+    const st = await getSettings(c.db);
+    statusSql = st.requireApproval && c.user!.role !== 'admin' ? `, status = 'pending', reject_reason = NULL` : `, status = 'available', reject_reason = NULL`;
+  }
   await c.db.tx([
     {
-      text: `UPDATE listings SET ${sets}, updated_at = now() WHERE id = $1`,
+      text: `UPDATE listings SET ${sets}${statusSql}, updated_at = now() WHERE id = $1`,
       params: [r.id, ...LISTING_COLS.map((k) => (d as any)[k])],
     },
     { text: `DELETE FROM listing_media WHERE listing_id = $1`, params: [r.id] },
@@ -540,6 +573,9 @@ route('POST', '/conversations', async (c) => {
     throw e;
   }
   await systemMessage(c.db, id, me.id, `بدأ ${me.name} محادثة بخصوص «${listing.title}»`);
+  await notify(c.db, [listing.seller_id], {
+    kind: 'new_conversation', title: '👀 زبون مهتم بإعلانك', body: `${me.name} — ${listing.title}`, url: `/chat/${id}`, tag: `chat-${id}`,
+  });
   return { id };
 });
 
@@ -580,7 +616,7 @@ route('GET', '/conversations', async (c) => {
 
 /** عدد غير المقروء + آخر المحادثات الفيها جديد (للجرس والشارة) */
 route('GET', '/unread', async (c) => {
-  if (!c.user) return { count: 0, items: [] };
+  if (!c.user) return { count: 0, items: [], notifications: [], unreadNotifications: 0 };
   const me = c.user;
   const rows = await c.db.query(
     `SELECT cv.id, cv.buyer_id, l.title, cv.last_message_at,
@@ -600,7 +636,19 @@ route('GET', '/unread', async (c) => {
       count: Number(r.unread),
       at: iso(r.last_message_at),
     }));
-  return { count: items.length, items: items.slice(0, 20) };
+  const notes = await c.db.query(
+    `SELECT id, kind, title, body, url, read_at, created_at FROM notifications WHERE user_id = $1
+     ORDER BY created_at DESC LIMIT 15`,
+    [me.id]
+  );
+  return {
+    count: items.length,
+    items: items.slice(0, 20),
+    notifications: notes.map((x) => ({
+      id: x.id, kind: x.kind, title: x.title, body: x.body, url: x.url, read: !!x.read_at, at: iso(x.created_at),
+    })),
+    unreadNotifications: notes.filter((x) => !x.read_at).length,
+  };
 });
 
 route('GET', '/conversations/:id', async (c) => {
@@ -634,7 +682,14 @@ route('GET', '/conversations/:id', async (c) => {
       offerStatus: conv.offer_status,
     },
     listing: listingOut(listing),
-    deal: deal ? { id: deal.id, price: Number(deal.price), status: deal.status, createdAt: iso(deal.created_at) } : null,
+    deal: deal
+      ? {
+          id: deal.id, price: Number(deal.price), status: deal.status, createdAt: iso(deal.created_at),
+          ...(side === 'seller' || me.role === 'admin'
+            ? { commissionAmount: n(deal.commission_amount), commissionStatus: deal.commission_status || null }
+            : {}),
+        }
+      : null,
     messages: msgs.map((m) => messageOut(m, me.id)),
     serverTime: new Date().toISOString(),
   };
@@ -669,6 +724,11 @@ route('POST', '/conversations/:id/messages', async (c) => {
     );
   }
   await c.db.query(`UPDATE conversations SET last_message_at = now(), ${side}_read_at = now() WHERE id = $1`, [conv.id]);
+  await notify(c.db, [side === 'buyer' ? conv.seller_id : conv.buyer_id], {
+    kind: 'message', pushOnly: true, tag: `chat-${conv.id}`, url: `/chat/${conv.id}`,
+    title: `💬 ${me.name}`,
+    body: type === 'text' ? String(b.body).slice(0, 120) : '🎤 رسالة صوتية',
+  });
   return { ok: true };
 });
 
@@ -689,6 +749,10 @@ route('POST', '/conversations/:id/offer', async (c) => {
       params: [conv.id, price, side],
     },
   ]);
+  await notify(c.db, [side === 'buyer' ? conv.seller_id : conv.buyer_id], {
+    kind: 'offer', title: '💰 عرض سعر جديد', tag: `chat-${conv.id}`, url: `/chat/${conv.id}`,
+    body: `${me.name} عرض ${new Intl.NumberFormat('en-US').format(price)} ج.س`,
+  });
   return { ok: true };
 });
 
@@ -716,6 +780,10 @@ route('POST', '/conversations/:id/accept', async (c) => {
     c.db, conv.id, me.id,
     `🤝 اتفاق مبدئي على ${new Intl.NumberFormat('en-US').format(price)} ج.س — الإعلان اتحجز، وأرقام التلفون ظهرت للطرفين عشان تتقابلوا. لما الصفقة تتم، البائع يأكد «تمت الصفقة».`
   );
+  await notify(c.db, [conv.buyer_id, conv.seller_id], {
+    kind: 'deal_agreed', title: '🤝 اتفاق مبدئي', tag: `chat-${conv.id}`, url: `/chat/${conv.id}`,
+    body: `اتفقتوا على ${new Intl.NumberFormat('en-US').format(price)} ج.س — أرقام التلفون ظهرت في المحادثة`,
+  });
   return { ok: true };
 });
 
@@ -732,16 +800,32 @@ route('POST', '/deals/:id/complete', async (c) => {
   const { me, deal, side } = await dealFor(c, c.params.id);
   if (side !== 'seller' && me.role !== 'admin') throw new HttpError(403, 'البائع بس البيأكد إن الصفقة تمت');
   if (deal.status !== 'agreed') throw new HttpError(400, 'الصفقة دي اتقفلت قبل كده');
-  const l = (await c.db.query(`SELECT deal_type FROM listings WHERE id = $1`, [deal.listing_id]))[0];
+  const l = (await c.db.query(`SELECT deal_type, category, title FROM listings WHERE id = $1`, [deal.listing_id]))[0];
+  const st = await getSettings(c.db);
+  const com = computeCommission(st, l?.category, l?.deal_type, Number(deal.price));
   await c.db.tx([
-    { text: `UPDATE deals SET status = 'completed', closed_at = now() WHERE id = $1`, params: [deal.id] },
+    {
+      text: `UPDATE deals SET status = 'completed', closed_at = now(), commission_amount = $2, commission_rule = $3,
+               commission_status = CASE WHEN $2::numeric > 0 THEN 'due' ELSE 'waived' END WHERE id = $1`,
+      params: [deal.id, com.amount, com.rule],
+    },
     {
       text: `UPDATE listings SET status = $2, updated_at = now() WHERE id = $1`,
       params: [deal.listing_id, l?.deal_type === 'rent' ? 'rented' : 'sold'],
     },
   ]);
   await systemMessage(c.db, deal.conversation_id, me.id, `✅ تمت الصفقة — مبروك للطرفين!`);
-  return { ok: true };
+  await notify(c.db, [deal.buyer_id], {
+    kind: 'deal_completed', title: '✅ تمت الصفقة', body: l?.title || '', url: `/chat/${deal.conversation_id}`,
+  });
+  if (com.amount > 0) {
+    await notify(c.db, [deal.seller_id], {
+      kind: 'commission_due', title: '🧾 عمولة السمسار مستحقة',
+      body: `${new Intl.NumberFormat('en-US').format(com.amount)} ج.س (${com.rule}) — التفاصيل في «إعلاناتي»`,
+      url: '/my',
+    });
+  }
+  return { ok: true, commission: com };
 });
 
 route('POST', '/deals/:id/cancel', async (c) => {
@@ -758,7 +842,280 @@ route('POST', '/deals/:id/cancel', async (c) => {
     },
   ]);
   await systemMessage(c.db, deal.conversation_id, me.id, `❌ الاتفاق اتلغى${reason ? ` — السبب: ${reason}` : ''}. الإعلان رجع متاح.`);
+  await notify(c.db, [deal.buyer_id, deal.seller_id].filter((id) => id !== me.id), {
+    kind: 'deal_cancelled', title: '❌ الاتفاق اتلغى', body: reason || '', url: `/chat/${deal.conversation_id}`,
+  });
   return { ok: true };
+});
+
+// ═════════════════════════ العمولات (البائع) ═════════════════════════
+
+function dealRowOut(r: any) {
+  return {
+    id: r.id,
+    listingId: r.listing_id,
+    listingTitle: r.title ?? null,
+    conversationId: r.conversation_id,
+    price: Number(r.price),
+    status: r.status,
+    commissionAmount: n(r.commission_amount),
+    commissionRule: r.commission_rule || null,
+    commissionStatus: r.commission_status || null,
+    commissionRef: r.commission_ref || null,
+    commissionNote: r.commission_note || null,
+    commissionPaidAt: iso(r.commission_paid_at),
+    cancelReason: r.cancel_reason || null,
+    createdAt: iso(r.created_at),
+    closedAt: iso(r.closed_at),
+    sellerName: r.seller_name ?? undefined,
+    sellerPhone: r.seller_phone ?? undefined,
+    buyerName: r.buyer_name ?? undefined,
+    buyerPhone: r.buyer_phone ?? undefined,
+  };
+}
+
+route('GET', '/my/commissions', async (c) => {
+  const me = requireUser(c);
+  const rows = await c.db.query(
+    `SELECT d.*, l.title FROM deals d JOIN listings l ON l.id = d.listing_id
+     WHERE d.seller_id = $1 AND d.commission_status IS NOT NULL ORDER BY d.closed_at DESC LIMIT 100`,
+    [me.id]
+  );
+  const st = await getSettings(c.db);
+  return { commissions: rows.map(dealRowOut), payInfo: st.payInfo };
+});
+
+/** البائع يرسل رقم عملية الدفع (بنكك مثلاً) — والإدارة بتأكد */
+route('POST', '/deals/:id/commission-ref', async (c) => {
+  const { me, deal } = await dealFor(c, c.params.id);
+  if (deal.seller_id !== me.id) throw new HttpError(403, 'البائع بس البيسدّد العمولة');
+  if (deal.commission_status !== 'due' && deal.commission_status !== 'submitted') {
+    throw new HttpError(400, 'العمولة دي ما منتظرة دفع');
+  }
+  const ref = str(c.req.body?.ref, 'رقم العملية', 120);
+  await c.db.query(`UPDATE deals SET commission_ref = $2, commission_status = 'submitted' WHERE id = $1`, [deal.id, ref]);
+  await notify(c.db, await adminIds(c.db), {
+    kind: 'commission_submitted', title: '💵 بائع أرسل إثبات دفع عمولة',
+    body: `${me.name} — ${new Intl.NumberFormat('en-US').format(Number(deal.commission_amount || 0))} ج.س — رقم: ${ref}`,
+    url: '/admin?tab=deals',
+  });
+  return { ok: true };
+});
+
+// ═════════════════════════ الإشعارات ═════════════════════════
+
+route('POST', '/notifications/read', async (c) => {
+  const me = requireUser(c);
+  await c.db.query(`UPDATE notifications SET read_at = now() WHERE user_id = $1 AND read_at IS NULL`, [me.id]);
+  return { ok: true };
+});
+
+route('GET', '/push/key', async (c) => ({ publicKey: (await getVapid(c.db)).publicKey }));
+
+route('POST', '/push/subscribe', async (c) => {
+  const me = requireUser(c);
+  const b = c.req.body || {};
+  const endpoint = str(b.endpoint, 'endpoint', 1000);
+  if (!/^https:\/\//.test(endpoint)) throw new HttpError(400, 'اشتراك غير صحيح');
+  const p256dh = str(b.keys?.p256dh, 'p256dh', 200);
+  const auth = str(b.keys?.auth, 'auth', 100);
+  await c.db.query(
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+    [newId('psh'), me.id, endpoint, p256dh, auth]
+  );
+  return { ok: true };
+});
+
+route('POST', '/push/unsubscribe', async (c) => {
+  const me = requireUser(c);
+  await c.db.query(`DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2`, [me.id, String(c.req.body?.endpoint || '')]);
+  return { ok: true };
+});
+
+// ═════════════════════════ لوحة الإدارة ═════════════════════════
+
+route('GET', '/admin/stats', async (c) => {
+  requireUser(c, 'admin');
+  const [u] = await c.db.query(
+    `SELECT count(*)::int AS total, count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS week FROM users`
+  );
+  const ls = await c.db.query<{ status: string; n: number }>(`SELECT status, count(*)::int AS n FROM listings GROUP BY status`);
+  const ds = await c.db.query<{ status: string; n: number }>(`SELECT status, count(*)::int AS n FROM deals GROUP BY status`);
+  const [cm] = await c.db.query(
+    `SELECT
+       coalesce(sum(commission_amount) FILTER (WHERE commission_status IN ('due','submitted')), 0) AS due,
+       count(*) FILTER (WHERE commission_status IN ('due','submitted'))::int AS due_count,
+       count(*) FILTER (WHERE commission_status = 'submitted')::int AS submitted_count,
+       coalesce(sum(commission_amount) FILTER (WHERE commission_status = 'paid'), 0) AS paid,
+       coalesce(sum(commission_amount) FILTER (WHERE commission_status = 'paid' AND commission_paid_at > date_trunc('month', now())), 0) AS paid_month,
+       coalesce(sum(price) FILTER (WHERE status = 'completed'), 0) AS volume
+     FROM deals`
+  );
+  const toMap = (rows: { status: string; n: number }[]) => Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
+  return {
+    users: { total: Number(u.total), week: Number(u.week) },
+    listings: toMap(ls),
+    deals: toMap(ds),
+    commission: {
+      due: Number(cm.due), dueCount: Number(cm.due_count), submittedCount: Number(cm.submitted_count),
+      paid: Number(cm.paid), paidMonth: Number(cm.paid_month), volume: Number(cm.volume),
+    },
+  };
+});
+
+route('GET', '/admin/deals', async (c) => {
+  requireUser(c, 'admin');
+  const f = c.query.filter || 'all';
+  const where =
+    f === 'unpaid' ? `d.commission_status IN ('due','submitted')`
+    : f === 'submitted' ? `d.commission_status = 'submitted'`
+    : f === 'agreed' ? `d.status = 'agreed'`
+    : f === 'cancelled' ? `d.status = 'cancelled'`
+    : f === 'paid' ? `d.commission_status = 'paid'`
+    : 'true';
+  const rows = await c.db.query(
+    `SELECT d.*, l.title, us.name AS seller_name, us.phone AS seller_phone, ub.name AS buyer_name, ub.phone AS buyer_phone
+     FROM deals d JOIN listings l ON l.id = d.listing_id
+     JOIN users us ON us.id = d.seller_id JOIN users ub ON ub.id = d.buyer_id
+     WHERE ${where} ORDER BY d.created_at DESC LIMIT 200`
+  );
+  return { deals: rows.map(dealRowOut) };
+});
+
+route('PATCH', '/admin/deals/:id', async (c) => {
+  requireUser(c, 'admin');
+  const deal = (await c.db.query(`SELECT * FROM deals WHERE id = $1`, [c.params.id]))[0];
+  if (!deal) throw new HttpError(404, 'الصفقة غير موجودة');
+  const b = c.req.body || {};
+  const amount = b.commissionAmount === undefined ? n(deal.commission_amount) : num(b.commissionAmount, 'العمولة', 0, 1e13);
+  const status = b.commissionStatus === undefined
+    ? deal.commission_status
+    : oneOf(b.commissionStatus, 'حالة العمولة', ['due', 'submitted', 'paid', 'waived'] as const);
+  const note = b.note === undefined ? deal.commission_note : str(b.note, 'ملاحظة', 500, false);
+  if (deal.status !== 'completed' && status) throw new HttpError(400, 'العمولة بتتحدد بعد إتمام الصفقة');
+  await c.db.query(
+    `UPDATE deals SET commission_amount = $2, commission_status = $3, commission_note = $4,
+       commission_paid_at = CASE WHEN $3 = 'paid' THEN coalesce(commission_paid_at, now()) ELSE NULL END
+     WHERE id = $1`,
+    [deal.id, amount, status, note]
+  );
+  if (status === 'paid' && deal.commission_status !== 'paid') {
+    await notify(c.db, [deal.seller_id], {
+      kind: 'commission_paid', title: '✅ استلمنا العمولة — شكراً ليك',
+      body: `${new Intl.NumberFormat('en-US').format(Number(amount || 0))} ج.س`, url: '/my',
+    });
+  }
+  return { ok: true };
+});
+
+route('GET', '/admin/listings', async (c) => {
+  requireUser(c, 'admin');
+  const status = c.query.status || 'pending';
+  const params: unknown[] = [];
+  let where = status === 'all' ? 'true' : (params.push(status), `l.status = $1`);
+  if (c.query.q) {
+    params.push('%' + c.query.q.slice(0, 80).replace(/[\\%_]/g, (ch) => '\\' + ch) + '%');
+    where += ` AND (l.title ILIKE $${params.length} OR u.name ILIKE $${params.length} OR u.phone ILIKE $${params.length})`;
+  }
+  const rows = await c.db.query(
+    `${LISTING_SELECT.replace('u.verified AS seller_verified', 'u.verified AS seller_verified, u.phone AS seller_phone')}
+     WHERE ${where} ORDER BY l.created_at DESC LIMIT 200`,
+    params
+  );
+  return { listings: rows.map((r) => ({ ...listingOut(r), sellerPhone: r.seller_phone })) };
+});
+
+route('POST', '/admin/listings/:id/approve', async (c) => {
+  requireUser(c, 'admin');
+  const r = await getListing(c.db, c.params.id);
+  if (r.status !== 'pending' && r.status !== 'rejected') throw new HttpError(400, 'الإعلان ده ما منتظر مراجعة');
+  await c.db.query(`UPDATE listings SET status = 'available', reject_reason = NULL, updated_at = now() WHERE id = $1`, [r.id]);
+  await notify(c.db, [r.seller_id], { kind: 'listing_approved', title: '✅ إعلانك اتنشر', body: r.title, url: `/listing/${r.id}` });
+  return { ok: true };
+});
+
+route('POST', '/admin/listings/:id/reject', async (c) => {
+  requireUser(c, 'admin');
+  const r = await getListing(c.db, c.params.id);
+  if (r.status !== 'pending' && r.status !== 'available') throw new HttpError(400, 'ما بيترفض في الحالة دي');
+  const reason = str(c.req.body?.reason, 'السبب', 300);
+  await c.db.query(`UPDATE listings SET status = 'rejected', reject_reason = $2, updated_at = now() WHERE id = $1`, [r.id, reason]);
+  await notify(c.db, [r.seller_id], {
+    kind: 'listing_rejected', title: '⚠️ إعلانك محتاج تعديل', body: `${r.title} — ${reason}`, url: `/listing/${r.id}`,
+  });
+  return { ok: true };
+});
+
+route('GET', '/admin/users', async (c) => {
+  requireUser(c, 'admin');
+  const params: unknown[] = [];
+  let where = 'true';
+  if (c.query.q) {
+    // الرقم بيتكتب 0912... لكنه محفوظ +249912... — نحوّله قبل البحث
+    const q = normalizePhone(c.query.q)?.replace(/^\+/, '') || c.query.q.trim().replace(/^0/, '');
+    params.push('%' + q.slice(0, 80).replace(/[\\%_]/g, (ch) => '\\' + ch) + '%');
+    where = `(u.name ILIKE $1 OR u.phone ILIKE $1)`;
+  }
+  const rows = await c.db.query(
+    `SELECT u.*, (SELECT count(*)::int FROM listings WHERE seller_id = u.id) AS listings_count,
+       (SELECT count(*)::int FROM deals WHERE (seller_id = u.id OR buyer_id = u.id) AND status = 'completed') AS deals_count,
+       (SELECT coalesce(sum(commission_amount),0) FROM deals WHERE seller_id = u.id AND commission_status IN ('due','submitted')) AS due
+     FROM users u WHERE ${where} ORDER BY u.created_at DESC LIMIT 200`,
+    params
+  );
+  return {
+    users: rows.map((r) => ({
+      ...userOut(r), active: !!r.active, listingsCount: Number(r.listings_count), dealsCount: Number(r.deals_count), commissionDue: Number(r.due),
+    })),
+  };
+});
+
+route('PATCH', '/admin/users/:id', async (c) => {
+  const me = requireUser(c, 'admin');
+  const u = (await c.db.query(`SELECT * FROM users WHERE id = $1`, [c.params.id]))[0];
+  if (!u) throw new HttpError(404, 'المستخدم غير موجود');
+  const b = c.req.body || {};
+  if (u.id === me.id && b.active === false) throw new HttpError(400, 'ما بتقدر توقف حسابك إنت');
+  const verified = typeof b.verified === 'boolean' ? b.verified : !!u.verified;
+  const active = typeof b.active === 'boolean' ? b.active : !!u.active;
+  await c.db.query(
+    `UPDATE users SET verified = $2, active = $3, token_version = token_version + CASE WHEN $3 THEN 0 ELSE 1 END WHERE id = $1`,
+    [u.id, verified, active]
+  );
+  return { ok: true };
+});
+
+route('POST', '/admin/users/:id/reset-password', async (c) => {
+  requireUser(c, 'admin');
+  const u = (await c.db.query(`SELECT id FROM users WHERE id = $1`, [c.params.id]))[0];
+  if (!u) throw new HttpError(404, 'المستخدم غير موجود');
+  const temp = tempPassword();
+  await c.db.query(
+    `UPDATE users SET password_hash = $2, token_version = token_version + 1, failed_logins = 0, locked_until = NULL WHERE id = $1`,
+    [u.id, await hashPassword(temp)]
+  );
+  return { tempPassword: temp };
+});
+
+route('GET', '/admin/settings', async (c) => {
+  requireUser(c, 'admin');
+  return { settings: await getSettings(c.db) };
+});
+
+route('PUT', '/admin/settings', async (c) => {
+  requireUser(c, 'admin');
+  const b = c.req.body || {};
+  const s: PlatformSettings = {
+    carSalePct: num(b.carSalePct ?? DEFAULT_SETTINGS.carSalePct, 'نسبة السيارات', 0, 50),
+    propertySalePct: num(b.propertySalePct ?? DEFAULT_SETTINGS.propertySalePct, 'نسبة العقارات', 0, 50),
+    rentMonths: num(b.rentMonths ?? DEFAULT_SETTINGS.rentMonths, 'عمولة الإيجار', 0, 12),
+    payInfo: str(b.payInfo, 'بيانات الدفع', 500, false),
+    requireApproval: !!b.requireApproval,
+    blockOverdueDays: Math.round(num(b.blockOverdueDays ?? 0, 'أيام التأخير', 0, 365)),
+  };
+  await saveSettings(c.db, s);
+  return { settings: s };
 });
 
 // ───────────────────────── التشغيل ─────────────────────────

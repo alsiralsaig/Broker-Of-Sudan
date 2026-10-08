@@ -12,7 +12,13 @@ import { useAuth } from "@/lib/auth";
 import { refreshUnread } from "@/lib/useUnread";
 import { uploadVoice } from "@/lib/upload";
 import { formatPrice, timeAgo } from "@/lib/format";
-import type { ConversationDetail, Message } from "@/lib/types";
+import type { CommissionRates, ConversationDetail, Listing, Message } from "@/lib/types";
+
+function estimateCommission(r: CommissionRates | null, l: Listing, price: number) {
+  if (!r) return null;
+  if (l.dealType === "rent") return Math.round(price * r.rentMonths);
+  return Math.round((price * (l.category === "car" ? r.carSalePct : r.propertySalePct)) / 100);
+}
 
 const bubble = (mine: boolean) =>
   `max-w-[80%] rounded-2xl border ${mine ? "bg-sky-500/10 border-sky-500/40" : "bg-[#0f1b30] border-sky-900/60"}`;
@@ -32,6 +38,11 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastAt = useRef<string | null>(null);
   const busy = useRef(false);
+  const [rates, setRates] = useState<CommissionRates | null>(null);
+
+  useEffect(() => {
+    api<{ commission: CommissionRates }>("/config").then((r) => setRates(r.commission)).catch(() => {});
+  }, []);
 
   // جلب أول مرة كامل، وبعدها الجديد بس (يوفّر الباقة)
   const fetchChat = useCallback(async () => {
@@ -146,7 +157,9 @@ export default function ChatPage() {
   };
 
   const acceptOffer = (price: number) => {
-    if (!confirm(`تأكيد الاتفاق المبدئي على ${formatPrice(price)} ج.س؟\nالإعلان حيتحجز وأرقام التلفون حتظهر للطرفين.`)) return;
+    const com = isSeller ? estimateCommission(rates, listing, price) : null;
+    const comLine = com ? `\nعمولة السمسار بعد إتمام الصفقة: ${formatPrice(com)} ج.س` : "";
+    if (!confirm(`تأكيد الاتفاق المبدئي على ${formatPrice(price)} ج.س؟\nالإعلان حيتحجز وأرقام التلفون حتظهر للطرفين.${comLine}`)) return;
     act(() => api(`/conversations/${params.id}/accept`, { method: "POST" }));
   };
 
@@ -231,12 +244,23 @@ export default function ChatPage() {
             {!isSeller && !isAdmin && (
               <p className="text-[10px] text-slate-500 text-center">البائع بيأكد «تمت الصفقة» بعد الاستلام والتسليم.</p>
             )}
+            {isSeller && estimateCommission(rates, listing, deal.price) ? (
+              <p className="text-[10px] text-amber-300/90 text-center">
+                🧾 عمولة السمسار بعد الإتمام: {formatPrice(estimateCommission(rates, listing, deal.price))} ج.س
+              </p>
+            ) : null}
           </div>
         )}
         {deal?.status === "completed" && (
           <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold rounded-xl px-3.5 py-3 text-center">
             ✅ تمت الصفقة على {formatPrice(deal.price)} ج.س — مبروك!
             {conv.otherPhone && <span className="block mt-1 font-mono text-white" dir="ltr">{conv.otherPhone}</span>}
+            {isSeller && deal.commissionAmount ? (
+              <Link href="/my" className="block mt-2 text-amber-300">
+                🧾 عمولة السمسار: {formatPrice(deal.commissionAmount)} ج.س —{" "}
+                {deal.commissionStatus === "paid" ? "مدفوعة ✅" : deal.commissionStatus === "submitted" ? "منتظرة تأكيد" : "سدّدها من «إعلاناتي» ←"}
+              </Link>
+            ) : null}
           </div>
         )}
         {reservedElsewhere && (

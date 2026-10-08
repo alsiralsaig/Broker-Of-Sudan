@@ -13,6 +13,8 @@ import type { Listing } from "@/lib/types";
 
 const dealLabel: Record<string, string> = { sale: "للبيع", rent: "للإيجار" };
 const statusBanner: Record<string, string> = {
+  pending: "⏳ إعلانك قيد المراجعة — حيظهر للناس بعد موافقة الإدارة",
+  rejected: "⚠️ الإدارة رفضت الإعلان — عدّله وحيرجع للمراجعة",
   reserved: "🔒 محجوز — في اتفاق مبدئي مع مشتري",
   sold: "✅ تم البيع",
   rented: "✅ تم التأجير",
@@ -139,6 +141,9 @@ export default function ListingDetailPage() {
         {listing.status !== "available" && (
           <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold rounded-xl px-3.5 py-3 text-center">
             {statusBanner[listing.status]}
+            {listing.status === "rejected" && listing.rejectReason && (
+              <span className="block mt-1 text-red-300">السبب: {listing.rejectReason}</span>
+            )}
           </div>
         )}
 

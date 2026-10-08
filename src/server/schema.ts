@@ -2,7 +2,7 @@
 import type { Db } from './db';
 import { hashPassword, normalizePhone } from './auth';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS broker_meta (
@@ -108,6 +108,53 @@ const DDL: string[] = [
    )`,
 ];
 
+// ترقيات بالترتيب — كل نسخة بتتطبق مرة واحدة على القواعد القديمة (والجديدة كمان)
+const MIGRATIONS: Record<number, string[]> = {
+  2: [
+    // مراجعة الإعلانات
+    `ALTER TABLE listings DROP CONSTRAINT IF EXISTS listings_status_check`,
+    `ALTER TABLE listings ADD CONSTRAINT listings_status_check
+       CHECK (status IN ('pending','available','reserved','sold','rented','rejected'))`,
+    `ALTER TABLE listings ADD COLUMN IF NOT EXISTS reject_reason TEXT`,
+    // العمولة
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS commission_amount NUMERIC`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS commission_rule TEXT`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS commission_status TEXT
+       CHECK (commission_status IN ('due','submitted','paid','waived'))`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS commission_ref TEXT`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS commission_note TEXT`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS commission_paid_at TIMESTAMPTZ`,
+    `CREATE INDEX IF NOT EXISTS deals_commission_idx ON deals (commission_status)`,
+    // الإعدادات
+    `CREATE TABLE IF NOT EXISTS settings (
+       key TEXT PRIMARY KEY,
+       value JSONB NOT NULL,
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+     )`,
+    // الإشعارات
+    `CREATE TABLE IF NOT EXISTS notifications (
+       id TEXT PRIMARY KEY,
+       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       kind TEXT NOT NULL,
+       title TEXT NOT NULL,
+       body TEXT NOT NULL DEFAULT '',
+       url TEXT NOT NULL DEFAULT '/',
+       read_at TIMESTAMPTZ,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (user_id, created_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS push_subscriptions (
+       id TEXT PRIMARY KEY,
+       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       endpoint TEXT NOT NULL UNIQUE,
+       p256dh TEXT NOT NULL,
+       auth TEXT NOT NULL,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS push_user_idx ON push_subscriptions (user_id)`,
+  ],
+};
+
 let ready: Promise<void> | null = null;
 let readyFor: Db | null = null;
 
@@ -122,8 +169,12 @@ export function ensureSchema(db: Db): Promise<void> {
     }
     await db.query(DDL[0]);
     const meta = await db.query<{ version: number }>(`SELECT version FROM broker_meta WHERE id = 1`);
-    if (!meta[0] || meta[0].version < SCHEMA_VERSION) {
-      for (const stmt of DDL.slice(1)) await db.query(stmt);
+    const current = meta[0]?.version ?? 0;
+    if (current < SCHEMA_VERSION) {
+      if (current < 1) for (const stmt of DDL.slice(1)) await db.query(stmt);
+      for (let v = Math.max(2, current + 1); v <= SCHEMA_VERSION; v++) {
+        for (const stmt of MIGRATIONS[v] || []) await db.query(stmt);
+      }
       await db.query(
         `INSERT INTO broker_meta (id, version) VALUES (1, $1)
          ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, updated_at = now()`,

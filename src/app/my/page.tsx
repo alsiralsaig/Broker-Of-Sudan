@@ -9,8 +9,11 @@ import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatPrice, timeAgo } from "@/lib/format";
 import type { Listing } from "@/lib/types";
+import Commissions from "@/components/Commissions";
 
 const statusChip: Record<string, [string, string]> = {
+  pending: ["⏳ قيد المراجعة", "bg-sky-500/15 text-sky-300 border-sky-500/30"],
+  rejected: ["⚠️ مرفوض", "bg-red-500/15 text-red-300 border-red-500/30"],
   available: ["متاح", "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"],
   reserved: ["🔒 محجوز", "bg-amber-500/15 text-amber-300 border-amber-500/30"],
   sold: ["✅ اتباع", "bg-slate-500/15 text-slate-300 border-slate-500/30"],
@@ -48,6 +51,8 @@ export default function MyListingsPage() {
           <Link href="/new" className="px-3.5 py-2 bg-sky-500 text-slate-950 rounded-xl text-xs font-extrabold">➕ إعلان جديد</Link>
         </div>
 
+        <Commissions />
+
         {error && <div className="text-center text-red-300 text-xs">{error}</div>}
 
         {listings === null ? (
@@ -78,6 +83,9 @@ export default function MyListingsPage() {
                     <p className="text-sky-400 font-extrabold font-mono text-sm">
                       {formatPrice(l.price)} <span className="text-[10px]">ج.س{l.dealType === "rent" ? "/شهرياً" : ""}</span>
                     </p>
+                    {l.status === "rejected" && l.rejectReason && (
+                      <p className="text-[11px] text-red-300">السبب: {l.rejectReason} — عدّل الإعلان وحيرجع للمراجعة</p>
+                    )}
                     <div className="flex items-center gap-3 text-[11px] text-slate-500">
                       <span className="flex items-center gap-1"><Eye size={12} /> {l.views}</span>
                       <Link href="/chats" className="flex items-center gap-1 text-sky-400"><MessageCircle size={12} /> {l.conversationsCount || 0}</Link>

@@ -12,7 +12,7 @@ export default function Header() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
-  const unreadItems = useUnread(!!user);
+  const unread = useUnread(!!user);
   const [menu, setMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -56,8 +56,9 @@ export default function Header() {
           {navItem("/", "تصفح", "🔎")}
           {navItem("/new", "أضف إعلان", "➕")}
           {navItem("/my", "إعلاناتي", "📋")}
-          {navItem("/chats", "محادثاتي", "💬", unreadItems.length)}
-          {user && <NotificationBell items={unreadItems} />}
+          {navItem("/chats", "محادثاتي", "💬", unread.items.length)}
+          {user?.role === "admin" && navItem("/admin", "الإدارة", "🛠️")}
+          {user && <NotificationBell state={unread} />}
           {user && (
             <div className="relative" ref={menuRef}>
               <button

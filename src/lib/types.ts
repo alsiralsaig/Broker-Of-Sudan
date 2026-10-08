@@ -1,6 +1,6 @@
 export type ListingCategory = "car" | "property";
 export type DealType = "sale" | "rent";
-export type ListingStatus = "available" | "reserved" | "sold" | "rented";
+export type ListingStatus = "pending" | "available" | "reserved" | "sold" | "rented" | "rejected";
 
 export interface User {
   id: string;
@@ -41,6 +41,7 @@ export interface Listing {
   propertyAreaSqm: number | null;
   propertyFloor: number | null;
   status: ListingStatus;
+  rejectReason: string | null;
   views: number;
   cover: string | null;
   media: MediaItem[];
@@ -84,7 +85,14 @@ export interface ConversationDetail {
     offerStatus: "pending" | "accepted" | null;
   };
   listing: Listing;
-  deal: { id: string; price: number; status: "agreed" | "completed"; createdAt: string } | null;
+  deal: {
+    id: string;
+    price: number;
+    status: "agreed" | "completed";
+    createdAt: string;
+    commissionAmount?: number | null;
+    commissionStatus?: CommissionStatus | null;
+  } | null;
   messages: Message[];
   serverTime: string;
 }
@@ -95,4 +103,44 @@ export interface UnreadItem {
   from: "buyer" | "seller";
   count: number;
   at: string;
+}
+
+export interface AppNotification {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  url: string;
+  read: boolean;
+  at: string;
+}
+
+export type CommissionStatus = "due" | "submitted" | "paid" | "waived";
+
+export interface DealRow {
+  id: string;
+  listingId: string;
+  listingTitle: string | null;
+  conversationId: string;
+  price: number;
+  status: "agreed" | "completed" | "cancelled";
+  commissionAmount: number | null;
+  commissionRule: string | null;
+  commissionStatus: CommissionStatus | null;
+  commissionRef: string | null;
+  commissionNote: string | null;
+  commissionPaidAt: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+  closedAt: string | null;
+  sellerName?: string;
+  sellerPhone?: string;
+  buyerName?: string;
+  buyerPhone?: string;
+}
+
+export interface CommissionRates {
+  carSalePct: number;
+  propertySalePct: number;
+  rentMonths: number;
 }

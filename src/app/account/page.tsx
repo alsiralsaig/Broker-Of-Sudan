@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import AuthGate from "@/components/AuthGate";
+import PushToggle from "@/components/PushToggle";
 import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { User } from "@/lib/types";
@@ -67,6 +68,11 @@ export default function AccountPage() {
           >
             حفظ الاسم
           </button>
+        </div>
+
+        <div className="bg-[#0f1b30] border border-sky-900/60 rounded-2xl p-4 space-y-3">
+          <p className="text-sm font-bold text-white">🔔 الإشعارات</p>
+          <PushToggle />
         </div>
 
         <div className="bg-[#0f1b30] border border-sky-900/60 rounded-2xl p-4 space-y-3">

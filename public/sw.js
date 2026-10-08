@@ -3,14 +3,12 @@
 // ملاحظة: البيانات الحية (المحادثات، الإعلانات) تُجلب دائماً من الشبكة مباشرة
 // ولا يتم تخزينها مؤقتاً هنا حتى تبقى محدثة دوماً.
 
-const CACHE_NAME = "samsar-sudan-v6";
+const CACHE_NAME = "samsar-sudan-v7";
 const APP_SHELL = [
   "/",
   "/manifest.json",
 ];
 
-const APP_ICON =
-  "/icons/icon-192.png";
 
 
 self.addEventListener("install", (event) => {
@@ -62,42 +60,36 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch {
-    data = { title: "سمسار السودان 🔔", body: event.data ? event.data.text() : "لديك رسالة جديدة" };
+    data = { title: "سمسار السودان 🔔", body: event.data ? event.data.text() : "" };
   }
-
   const title = data.title || "سمسار السودان 🔔";
   const options = {
-    body: data.body || "لديك رسالة جديدة",
-    icon: data.icon || APP_ICON,
-    badge: data.badge || APP_ICON,
+    body: data.body || "",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
     dir: "rtl",
     lang: "ar",
     vibrate: [200, 100, 200],
-    data: { conversation_id: data.conversation_id || null },
-    tag: data.conversation_id ? `chat-${data.conversation_id}` : undefined,
-    renotify: true,
+    data: { url: data.url || "/" },
+    tag: data.tag || undefined,
+    renotify: !!data.tag,
   };
-
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// عند الضغط على الإشعار، نفتح المحادثة المعنية مباشرة
+// الضغط على الإشعار بيفتح الصفحة المعنية (أو يركّز عليها لو مفتوحة)
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-
-  const conversationId = event.notification.data?.conversation_id;
-  const targetUrl = conversationId ? `/chat/${conversationId}` : "/chats";
-
+  const target = new URL(event.notification.data?.url || "/", self.location.origin).href;
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientsList) => {
-      for (const client of clientsList) {
-        if (client.url.includes(targetUrl) && "focus" in client) {
-          return client.focus();
-        }
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if (c.url === target && "focus" in c) return c.focus();
       }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
+      for (const c of list) {
+        if ("navigate" in c && "focus" in c) return c.navigate(target).then((w) => (w || c).focus());
       }
+      return self.clients.openWindow ? self.clients.openWindow(target) : undefined;
     })
   );
 });

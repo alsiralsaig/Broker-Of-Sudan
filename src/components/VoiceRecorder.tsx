@@ -20,13 +20,14 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
   const chunksRef = useRef<Blob[]>([]);
   const startTimeRef = useRef<number>(0);
   const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const startRecording = async () => {
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       chunksRef.current = [];
       startTimeRef.current = Date.now();
@@ -35,7 +36,9 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
+        const type = (recorder.mimeType || mimeType || "audio/webm").split(";")[0];
+        const blob = new Blob(chunksRef.current, { type });
+        if (timerRef.current) clearTimeout(timerRef.current);
         setPreviewBlob(blob);
         setPreviewUrl(URL.createObjectURL(blob));
         setDuration(Math.round((Date.now() - startTimeRef.current) / 1000));
@@ -43,6 +46,8 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
       };
 
       recorder.start();
+      // حد أقصى دقيقتين (حجم مناسب للشبكة)
+      timerRef.current = setTimeout(() => recorder.state === "recording" && stopRecording(), 120000);
       mediaRecorderRef.current = recorder;
       setRecording(true);
     } catch {

@@ -3,14 +3,14 @@
 // ملاحظة: البيانات الحية (المحادثات، الإعلانات) تُجلب دائماً من الشبكة مباشرة
 // ولا يتم تخزينها مؤقتاً هنا حتى تبقى محدثة دوماً.
 
-const CACHE_NAME = "samsar-sudan-v3";
+const CACHE_NAME = "samsar-sudan-v4";
 const APP_SHELL = [
   "/",
   "/manifest.json",
 ];
 
 const APP_ICON =
-  "https://gfqrutdwvtqxtfgndyhd.supabase.co/storage/v1/object/public/media/public/icons/icon-192.png";
+  "/icons/icon-192.png";
 
 
 self.addEventListener("install", (event) => {
@@ -37,6 +37,9 @@ self.addEventListener("fetch", (event) => {
 
   // لا نتدخل أبداً في طلبات Supabase أو أي API خارجي — لازم تكون Live دايماً
   if (url.origin !== self.location.origin) return;
+
+  // الـ API (محادثات، حساب، إعلانات) ما بيتخزن أبداً — بيانات شخصية ولازم تكون حية
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/_next/data/")) return;
 
   // استراتيجية "الشبكة أولاً": نحاول نجيب أحدث نسخة، ولو فشل الاتصال نستخدم النسخة المخزنة
   event.respondWith(

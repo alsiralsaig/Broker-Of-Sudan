@@ -64,7 +64,7 @@ export default function InstallAppBanner() {
         <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0 border border-sky-900/60">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="https://gfqrutdwvtqxtfgndyhd.supabase.co/storage/v1/object/public/media/public/icons/icon-192.png"
+            src="/icons/icon-192.png"
             alt="سمسار السودان"
             className="w-full h-full object-cover"
           />

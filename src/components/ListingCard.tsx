@@ -17,12 +17,12 @@ const statusLabel: Record<string, string> = {
 };
 
 export default function ListingCard({ listing }: { listing: Listing }) {
-  const cover = listing.listing_media?.find((m) => m.media_type === "image")?.url;
+  const cover = listing.cover;
   const isCar = listing.category === "car";
 
   const subtitle = isCar
-    ? [listing.car_make, listing.car_model, listing.car_year].filter(Boolean).join(" · ")
-    : [listing.property_type, listing.location].filter(Boolean).join(" · ");
+    ? [listing.carMake, listing.carModel, listing.carYear].filter(Boolean).join(" · ")
+    : [listing.propertyType, listing.city || listing.location].filter(Boolean).join(" · ");
 
   const unavailable = listing.status !== "available";
 
@@ -37,6 +37,7 @@ export default function ListingCard({ listing }: { listing: Listing }) {
           <img
             src={cover}
             alt={listing.title}
+            loading="lazy"
             className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
           />
         ) : (
@@ -46,7 +47,7 @@ export default function ListingCard({ listing }: { listing: Listing }) {
         )}
 
         <span className="absolute top-2 right-2 bg-sky-500/90 text-slate-950 text-[10px] font-extrabold px-2.5 py-1 rounded-lg shadow">
-          {dealLabel[listing.deal_type]}
+          {dealLabel[listing.dealType]}
         </span>
 
         {unavailable && (
@@ -61,9 +62,9 @@ export default function ListingCard({ listing }: { listing: Listing }) {
         {subtitle && <p className="text-[11px] text-slate-400 truncate">{subtitle}</p>}
         <div className="flex items-center justify-between pt-1">
           <span className="text-sky-400 font-extrabold font-mono text-sm">
-            {formatPrice(listing.price)} <span className="text-[10px] font-semibold">ج.س{listing.deal_type === "rent" ? "/شهرياً" : ""}</span>
+            {formatPrice(listing.price)} <span className="text-[10px] font-semibold">ج.س{listing.dealType === "rent" ? "/شهرياً" : ""}</span>
           </span>
-          <span className="text-[10px] text-slate-500">{timeAgo(listing.created_at)}</span>
+          <span className="text-[10px] text-slate-500">{timeAgo(listing.createdAt)}</span>
         </div>
       </div>
     </Link>

@@ -1,22 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { getSavedPhone } from "@/lib/session";
-import { useUnreadConversations } from "@/lib/useUnreadConversations";
+import { usePathname, useRouter } from "next/navigation";
+import { UserRound, LogOut, KeyRound } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { useUnread } from "@/lib/useUnread";
 import NotificationBell from "@/components/NotificationBell";
 
 export default function Header() {
   const pathname = usePathname();
-  const [phone, setPhone] = useState<string | null>(null);
+  const router = useRouter();
+  const { user, logout } = useAuth();
+  const unreadItems = useUnread(!!user);
+  const [menu, setMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setPhone(getSavedPhone());
-  }, [pathname]);
-
-  const unreadItems = useUnreadConversations(phone);
-  const unreadCount = unreadItems.length;
+    const h = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(false);
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
 
   const navItem = (href: string, label: string, emoji: string, badge?: number) => {
     const active = pathname === href || (href !== "/" && pathname?.startsWith(href));
@@ -24,13 +30,10 @@ export default function Header() {
       <Link
         href={href}
         className={`relative px-2 sm:px-3.5 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 shrink-0 ${
-          active
-            ? "bg-sky-500 text-slate-950 shadow-md"
-            : "bg-[#0f1b30] text-slate-300 border border-sky-900/60 hover:text-white"
+          active ? "bg-sky-500 text-slate-950 shadow-md" : "bg-[#0f1b30] text-slate-300 border border-sky-900/60 hover:text-white"
         }`}
       >
         <span>{emoji}</span>
-        {/* النص يختفي على الشاشات الصغيرة عشان كل الأزرار تفضل ظاهرة كاملة بدون الحاجة للسحب */}
         <span className="hidden sm:inline">{label}</span>
         {!!badge && (
           <span className="absolute -top-1.5 -left-1.5 bg-red-500 text-white text-[9px] font-extrabold min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center border-2 border-[#0b1220]">
@@ -53,8 +56,39 @@ export default function Header() {
           {navItem("/", "تصفح", "🔎")}
           {navItem("/new", "أضف إعلان", "➕")}
           {navItem("/my", "إعلاناتي", "📋")}
-          {navItem("/chats", "محادثاتي", "💬", unreadCount)}
-          {phone && <NotificationBell phone={phone} items={unreadItems} />}
+          {navItem("/chats", "محادثاتي", "💬", unreadItems.length)}
+          {user && <NotificationBell items={unreadItems} />}
+          {user && (
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setMenu((v) => !v)}
+                className="w-9 h-9 rounded-xl bg-[#0f1b30] border border-sky-900/60 flex items-center justify-center text-slate-300 hover:text-white"
+                aria-label="حسابي"
+              >
+                <UserRound size={16} />
+              </button>
+              {menu && (
+                <div className="absolute left-0 mt-2 w-56 bg-[#0f1b30] border border-sky-900/60 rounded-2xl shadow-2xl overflow-hidden z-50">
+                  <div className="px-4 py-3 border-b border-sky-900/50">
+                    <p className="text-sm font-extrabold text-white truncate">{user.name}</p>
+                    <p className="text-[11px] text-slate-400 font-mono" dir="ltr">{user.phone}</p>
+                  </div>
+                  <button
+                    onClick={() => { setMenu(false); router.push("/account"); }}
+                    className="w-full text-right px-4 py-2.5 text-xs font-bold text-slate-200 hover:bg-sky-500/5 flex items-center gap-2"
+                  >
+                    <KeyRound size={14} /> حسابي وكلمة السر
+                  </button>
+                  <button
+                    onClick={async () => { setMenu(false); await logout(); router.push("/"); }}
+                    className="w-full text-right px-4 py-2.5 text-xs font-bold text-red-300 hover:bg-red-500/5 flex items-center gap-2 border-t border-sky-900/40"
+                  >
+                    <LogOut size={14} /> تسجيل خروج
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </nav>
       </div>
     </header>

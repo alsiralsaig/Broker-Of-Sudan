@@ -3,149 +3,115 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Header from "@/components/Header";
-import PhoneGate from "@/components/PhoneGate";
-import { supabase } from "@/lib/supabase";
-import { displayPhone, formatPrice, timeAgo } from "@/lib/format";
-import { getSavedPhone } from "@/lib/session";
-import { isUnread } from "@/lib/notifications";
-import type { Conversation } from "@/lib/types";
+import AuthGate from "@/components/AuthGate";
+import { api, errMsg } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { formatPrice, timeAgo } from "@/lib/format";
+import type { ConversationSummary } from "@/lib/types";
 
-interface LastMessageInfo {
-  created_at: string;
-  sender_phone: string;
+function preview(c: ConversationSummary) {
+  const m = c.lastMessage;
+  if (!m) return "";
+  const who = m.mine ? "إنت: " : "";
+  if (m.type === "offer") return `${who}💰 عرض ${formatPrice(m.offerPrice)} ج.س`;
+  if (m.type === "voice") return `${who}🎤 رسالة صوتية`;
+  if (m.type === "system") return m.body;
+  return who + m.body;
 }
 
-export default function ChatsListPage() {
-  const [phone, setPhone] = useState<string | null>(null);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [lastMessages, setLastMessages] = useState<Record<string, LastMessageInfo>>({});
-  const [loading, setLoading] = useState(true);
+export default function ChatsPage() {
+  const { user, loading: authLoading } = useAuth();
+  const [items, setItems] = useState<ConversationSummary[] | null>(null);
+  const [tab, setTab] = useState<"all" | "buyer" | "seller">("all");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setPhone(getSavedPhone());
-  }, []);
-
-  useEffect(() => {
-    if (!phone) return;
-
-    const fetchChats = async (showLoading = true) => {
-      if (showLoading) setLoading(true);
-
-      const { data: convs } = await supabase
-        .from("conversations")
-        .select("*, listing:listings(*)")
-        .or(`buyer_phone.eq.${phone},seller_phone.eq.${phone}`)
-        .order("updated_at", { ascending: false });
-
-      const list = (convs as unknown as Conversation[]) || [];
-      setConversations(list);
-
-      // نجيب آخر رسالة في كل محادثة عشان نحدد لو فيه جديد لسه ما اتقراش
-      if (list.length > 0) {
-        const ids = list.map((c) => c.id);
-        const { data: msgs } = await supabase
-          .from("messages")
-          .select("conversation_id, sender_phone, created_at")
-          .in("conversation_id", ids)
-          .order("created_at", { ascending: true });
-
-        const lastByConv: Record<string, LastMessageInfo> = {};
-        (msgs || []).forEach((m: any) => {
-          lastByConv[m.conversation_id] = { created_at: m.created_at, sender_phone: m.sender_phone };
-        });
-        setLastMessages(lastByConv);
-      }
-
-      setLoading(false);
+    if (!user) return;
+    let alive = true;
+    const load = () => {
+      if (document.visibilityState !== "visible") return;
+      api<{ conversations: ConversationSummary[] }>("/conversations")
+        .then((r) => alive && setItems(r.conversations))
+        .catch((e) => alive && setError(errMsg(e)));
     };
-
-    fetchChats();
-
-    // تحديث تلقائي كل 5 ثواني — يظهر المحادثات والرسائل الجديدة بدون
-    // ما يحتاج المستخدم يعمل Refresh يدوي للصفحة
-    const pollInterval = setInterval(() => fetchChats(false), 5000);
-
-    const channel = supabase
-      .channel(`chats-list-${phone}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, () => fetchChats(false))
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, () => fetchChats(false))
-      .subscribe();
-
+    load();
+    const t = setInterval(load, 10000);
     return () => {
-      clearInterval(pollInterval);
-      supabase.removeChannel(channel);
+      alive = false;
+      clearInterval(t);
     };
-  }, [phone]);
+  }, [user]);
 
-  if (!phone) {
+  if (authLoading) return <div className="min-h-screen bg-[#0b1220]"><Header /></div>;
+  if (!user) {
     return (
       <div className="min-h-screen bg-[#0b1220]">
         <Header />
-        <PhoneGate title="سجّل دخولك لعرض محادثاتك" onDone={(p) => setPhone(p)} />
+        <AuthGate title="سجّل دخولك لعرض محادثاتك" />
       </div>
     );
   }
 
-  const unreadCount = conversations.filter((conv) => {
-    const last = lastMessages[conv.id];
-    return isUnread(conv.id, last?.created_at, last?.sender_phone, phone);
-  }).length;
+  const shown = (items || []).filter((c) => tab === "all" || c.side === tab);
 
   return (
     <div className="min-h-screen bg-[#0b1220]">
       <Header />
-      <main className="max-w-2xl mx-auto px-4 py-6 space-y-3">
-        <div className="flex items-center gap-2 mb-2">
-          <h1 className="text-lg font-extrabold text-white">💬 محادثاتي</h1>
-          {unreadCount > 0 && (
-            <span className="bg-red-500 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-full">
-              {unreadCount} جديد
-            </span>
-          )}
+      <main className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+        <h1 className="text-lg font-extrabold text-white">💬 محادثاتي</h1>
+        <div className="grid grid-cols-3 gap-2 bg-[#0f1b30] p-1 rounded-xl border border-sky-900/60">
+          {([["all", "الكل"], ["buyer", "بشتري"], ["seller", "ببيع"]] as const).map(([id, l]) => (
+            <button key={id} onClick={() => setTab(id)} className={`py-2 rounded-lg text-xs font-extrabold ${tab === id ? "bg-sky-500 text-slate-950" : "text-slate-400"}`}>
+              {l}
+            </button>
+          ))}
         </div>
 
-        {loading ? (
+        {error && <div className="text-center text-red-300 text-xs">{error}</div>}
+
+        {items === null ? (
           <div className="text-center py-16 text-slate-500 text-sm">جاري التحميل... ⏳</div>
-        ) : conversations.length === 0 ? (
+        ) : shown.length === 0 ? (
           <div className="text-center py-16 bg-[#0f1b30] border border-sky-900/60 rounded-2xl text-slate-400 text-sm">
-            لا توجد محادثات بعد.
+            ما في محادثات هنا لسه.
           </div>
         ) : (
-          conversations.map((conv) => {
-            const isSeller = phone === conv.seller_phone;
-            const otherPhone = isSeller ? conv.buyer_phone : conv.seller_phone;
-            const last = lastMessages[conv.id];
-            const unread = isUnread(conv.id, last?.created_at, last?.sender_phone, phone);
-
-            return (
+          <div className="space-y-2">
+            {shown.map((c) => (
               <Link
-                key={conv.id}
-                href={`/chat/${conv.id}`}
-                className={`flex items-center justify-between gap-3 bg-[#0f1b30] rounded-2xl p-4 hover:border-sky-600/60 transition ${
-                  unread ? "border-2 border-sky-500 shadow-lg shadow-sky-500/10" : "border border-sky-900/60"
+                key={c.id}
+                href={`/chat/${c.id}`}
+                className={`flex gap-3 items-center bg-[#0f1b30] border rounded-2xl p-3 transition hover:border-sky-600/60 ${
+                  c.unread ? "border-sky-500/60" : "border-sky-900/60"
                 }`}
               >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    {unread && <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />}
-                    <p className={`text-sm truncate ${unread ? "font-extrabold text-white" : "font-bold text-slate-200"}`}>
-                      {conv.listing?.title || "إعلان محذوف"}
-                    </p>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {isSeller ? "مشتري" : "بائع"}: {displayPhone(otherPhone)}
-                  </p>
-                  {conv.current_offer_price && (
-                    <p className="text-xs text-sky-400 font-mono font-bold mt-1">
-                      آخر عرض: {formatPrice(conv.current_offer_price)} ج.س
-                      {conv.offer_status === "accepted" && " ✅ متفق عليه"}
-                    </p>
-                  )}
+                <div className="shrink-0 w-14 h-14 rounded-xl overflow-hidden bg-[#0b1526] flex items-center justify-center text-xl">
+                  {c.listing.cover ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={c.listing.cover} alt="" loading="lazy" className="w-full h-full object-cover" />
+                  ) : "📦"}
                 </div>
-                <span className="text-[10px] text-slate-500 shrink-0">{timeAgo(conv.updated_at)}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-bold text-white truncate">{c.listing.title}</p>
+                    <span className="shrink-0 text-[10px] text-slate-500">{timeAgo(c.lastMessageAt)}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    {c.side === "seller" ? "المشتري" : "البائع"}: {c.otherName}
+                    {c.offerStatus === "accepted" && <span className="text-emerald-400 font-bold"> · 🤝 اتفاق</span>}
+                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className={`text-xs truncate ${c.unread ? "text-white font-bold" : "text-slate-500"}`}>{preview(c)}</p>
+                    {c.unread > 0 && (
+                      <span className="shrink-0 bg-red-500 text-white text-[10px] font-extrabold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center">
+                        {c.unread > 9 ? "9+" : c.unread}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </Link>
-            );
-          })
+            ))}
+          </div>
         )}
       </main>
     </div>

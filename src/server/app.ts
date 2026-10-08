@@ -176,10 +176,8 @@ function route(method: string, path: string, handler: Handler) {
 }
 
 route('GET', '/health', async (c) => {
-  const tables = await c.db.query<{ t: string }>(
-    `SELECT table_name AS t FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1`
-  );
-  return { ok: true, tables: tables.map((r) => r.t) };
+  await c.db.query('SELECT 1');
+  return { ok: true };
 });
 
 route('GET', '/config', async () => ({ videoUpload: blobEnabled() }));
@@ -814,7 +812,11 @@ export async function handleApi(req: ApiRequest, dbOverride?: Db): Promise<ApiRe
       return { status: e.status, json: { error: e.message }, headers: { 'Cache-Control': 'no-store' }, cookies: cookiesOut };
     }
     console.error('[api] unexpected error:', e);
-    const msg = String(e?.message || '').includes('DATABASE_URL')
+    const raw = String(e?.message || '');
+    if (raw.startsWith('FOREIGN_DB:')) {
+      return { status: 503, json: { error: raw.slice(11).trim() }, headers: { 'Cache-Control': 'no-store' }, cookies: cookiesOut };
+    }
+    const msg = raw.includes('DATABASE_URL')
       ? 'قاعدة البيانات غير مربوطة — تأكد من DATABASE_URL في إعدادات Vercel'
       : 'حصل خطأ في السيرفر، جرّب تاني';
     const diag = msg.includes('DATABASE_URL') ? { envNames: dbEnvNames() } : {};

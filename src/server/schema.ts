@@ -5,7 +5,7 @@ import { hashPassword, normalizePhone } from './auth';
 export const SCHEMA_VERSION = 1;
 
 const DDL: string[] = [
-  `CREATE TABLE IF NOT EXISTS schema_meta (
+  `CREATE TABLE IF NOT EXISTS broker_meta (
      id INT PRIMARY KEY DEFAULT 1,
      version INT NOT NULL,
      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -115,12 +115,17 @@ export function ensureSchema(db: Db): Promise<void> {
   if (ready && readyFor === db) return ready;
   readyFor = db;
   ready = (async () => {
+    // حماية: لو القاعدة فيها جداول مشروع تاني (users موجود بدون broker_meta) ما نلمس حاجة
+    const own = await db.query(`SELECT to_regclass('public.broker_meta') AS m, to_regclass('public.users') AS u`);
+    if (!own[0]?.m && own[0]?.u) {
+      throw new Error('FOREIGN_DB: قاعدة البيانات دي تبع مشروع تاني — اربط قاعدة Neon جديدة خاصة بالسمسار');
+    }
     await db.query(DDL[0]);
-    const meta = await db.query<{ version: number }>(`SELECT version FROM schema_meta WHERE id = 1`);
+    const meta = await db.query<{ version: number }>(`SELECT version FROM broker_meta WHERE id = 1`);
     if (!meta[0] || meta[0].version < SCHEMA_VERSION) {
       for (const stmt of DDL.slice(1)) await db.query(stmt);
       await db.query(
-        `INSERT INTO schema_meta (id, version) VALUES (1, $1)
+        `INSERT INTO broker_meta (id, version) VALUES (1, $1)
          ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, updated_at = now()`,
         [SCHEMA_VERSION]
       );

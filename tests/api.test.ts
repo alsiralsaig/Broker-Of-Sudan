@@ -219,3 +219,13 @@ test('قفل الحساب بعد 5 محاولات غلط', async () => {
   const r = await c.call('POST', '/auth/login', { phone: '0933333333', password: 'buyer2-pass' });
   assert.equal(r.status, 429);
 });
+
+test('حماية: ما بيشتغل على قاعدة مشروع تاني', async () => {
+  const other = await createPgliteDb();
+  await other.query(`CREATE TABLE users (id TEXT PRIMARY KEY, phone TEXT)`);
+  await other.query(`CREATE TABLE schema_meta (id INT PRIMARY KEY, version INT)`);
+  const r = await handleApi({ method: 'GET', path: '/listings', headers: {} }, other);
+  assert.equal(r.status, 503);
+  const t = await other.query(`SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema='public'`);
+  assert.equal(t[0].n, 2); // ما اتعمل أي جدول
+});

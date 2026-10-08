@@ -176,8 +176,10 @@ function route(method: string, path: string, handler: Handler) {
 }
 
 route('GET', '/health', async (c) => {
-  await c.db.query('SELECT 1');
-  return { ok: true };
+  const tables = await c.db.query<{ t: string }>(
+    `SELECT table_name AS t FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1`
+  );
+  return { ok: true, tables: tables.map((r) => r.t) };
 });
 
 route('GET', '/config', async () => ({ videoUpload: blobEnabled() }));

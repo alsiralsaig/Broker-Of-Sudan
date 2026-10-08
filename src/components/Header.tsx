@@ -7,6 +7,7 @@ import { UserRound, LogOut, KeyRound } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useUnread } from "@/lib/useUnread";
 import NotificationBell from "@/components/NotificationBell";
+import PushBanner from "@/components/PushBanner";
 
 export default function Header() {
   const pathname = usePathname();
@@ -92,6 +93,7 @@ export default function Header() {
           )}
         </nav>
       </div>
+      {user && <PushBanner key={user.id} />}
     </header>
   );
 }

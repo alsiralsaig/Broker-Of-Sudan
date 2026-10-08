@@ -1,0 +1,18 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "sd.samsar.app",
+      "sha256_cert_fingerprints": ["A1:78:44:5F:49:F8:ED:B2:9B:4F:CE:2C:0E:16:19:3C:51:06:D3:AB:67:C0:34:35:5D:C4:72:FA:1B:47:A4:0A"]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "sd.samsar.admin",
+      "sha256_cert_fingerprints": ["A1:78:44:5F:49:F8:ED:B2:9B:4F:CE:2C:0E:16:19:3C:51:06:D3:AB:67:C0:34:35:5D:C4:72:FA:1B:47:A4:0A"]
+    }
+  }
+]

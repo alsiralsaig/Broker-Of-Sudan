@@ -51,6 +51,8 @@ let cached: Promise<Db> | null = null;
 /** رابط القاعدة — يقبل الأسماء الافتراضية أو بادئة (مثلاً STORAGE_DATABASE_URL من ربط Vercel) */
 export function findDbUrl(): string {
   const env = process.env;
+  // اسم خاص بالسمسار — له الأولوية على أي متغير بيضيفه ربط تلقائي
+  if (env.BROKER_DATABASE_URL) return env.BROKER_DATABASE_URL;
   if (env.DATABASE_URL) return env.DATABASE_URL;
   if (env.POSTGRES_URL) return env.POSTGRES_URL;
   const key = Object.keys(env).find(

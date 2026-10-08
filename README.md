@@ -15,6 +15,7 @@
 1. **Storage → Neon** (Create & connect) ← بيضيف `DATABASE_URL` تلقائياً.
 2. **Storage → Blob** (Create & connect) ← بيضيف `BLOB_READ_WRITE_TOKEN` (للصور الكبيرة والفيديو).
 3. **Settings → Environment Variables:**
+   - `BROKER_DATABASE_URL` — (اختياري) رابط قاعدة خاص، له الأولوية على DATABASE_URL
    - `AUTH_SECRET` — نص عشوائي طويل (32 حرف أو أكتر)
    - `ADMIN_PHONE` و `ADMIN_PASSWORD` — حساب المدير (بيتعمل تلقائياً أول مرة)
 4. Redeploy. الجداول بتتعمل لوحدها.
